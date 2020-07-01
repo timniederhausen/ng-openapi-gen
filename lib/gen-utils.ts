@@ -161,9 +161,23 @@ export function escapeId(name: string) {
  */
 export function tsType(schemaOrRef: SchemaObject | ReferenceObject | undefined, options: Options, container?: Model): string {
   if (schemaOrRef && (schemaOrRef as SchemaObject).nullable) {
-    return `null | (${toType(schemaOrRef, options)})`;
+    return `null | ${toNestedType(schemaOrRef, options)}`;
   }
   return toType(schemaOrRef, options, container);
+}
+
+function toNestedType(schemaOrRef: SchemaObject | ReferenceObject | undefined, options: Options, container?: Model) {
+  const type = toType(schemaOrRef, options, container);
+  if (!schemaOrRef || schemaOrRef.$ref) {
+    return type;
+  }
+
+  const schema = schemaOrRef as SchemaObject;
+  const typeLists = schema.oneOf || schema.anyOf || schema.allOf || schema.enum || [];
+  if (typeLists.length > 0) {
+    return `(${type})`;
+  }
+  return type;
 }
 
 function toType(schemaOrRef: SchemaObject | ReferenceObject | undefined, options: Options, container?: Model): string {
@@ -183,28 +197,29 @@ function toType(schemaOrRef: SchemaObject | ReferenceObject | undefined, options
   }
   const schema = schemaOrRef as SchemaObject;
 
-  // An union of types
-  const union = schema.oneOf || schema.anyOf || [];
-  if (union.length > 0) {
-    return `(${union.map(u => toType(u, options, container)).join(' | ')})`;
-  }
-
-  // All the types
-  const allOf = schema.allOf || [];
-  if (allOf.length > 0) {
-    return allOf.map(u => toType(u, options, container)).join(' & ');
-  }
-
   const type = schema.type || 'any';
 
-  // An array
-  if (type === 'array' || schema.items) {
-    return `Array<${toType(schema.items || {}, options, container)}>`;
+  // A Blob
+  if (type === 'string' && schema.format === 'binary') {
+    return 'Blob';
   }
 
-  // An object
-  if (type === 'object' || schema.properties) {
-    let result = '{ ';
+  // Inline enum
+  const enumValues = schema.enum || [];
+  if (enumValues.length > 0) {
+    if (type === 'number' || type === 'integer') {
+      return enumValues.join(' | ');
+    } else {
+      return enumValues.map(v => `'${jsesc(v)}'`).join(' | ');
+    }
+  }
+
+  let result = '';
+
+  if (type === 'array' || schema.items) {
+    result = `Array<${toType(schema.items || {}, options, container)}>`;
+  } else if (schema.properties) {
+    result = '{ ';
     let first = true;
     const properties = schema.properties || {};
     const required = schema.required;
@@ -220,7 +235,7 @@ function toType(schemaOrRef: SchemaObject | ReferenceObject | undefined, options
       if (!propRequired) {
         result += '?';
       }
-      result += `: ${toType(property, options, container)}`;
+      result += `: ${tsType(property, options, container)}`;
     }
     if (schema.additionalProperties) {
       const additionalProperties = schema.additionalProperties === true ? {} : schema.additionalProperties;
@@ -230,22 +245,36 @@ function toType(schemaOrRef: SchemaObject | ReferenceObject | undefined, options
       result += `[key: string]: ${toType(additionalProperties, options, container)}`;
     }
     result += ' }';
-    return result;
   }
 
-  // Inline enum
-  const enumValues = schema.enum || [];
-  if (enumValues.length > 0) {
-    if (type === 'number' || type === 'integer') {
-      return enumValues.join(' | ');
+  // An union of types
+  const union = schema.oneOf || schema.anyOf || [];
+  if (union.length > 0) {
+    const nested = union.map(u => toNestedType(u, options, container)).join(' | ');
+    if (result !== '') {
+      result += ` & (${nested})`;
     } else {
-      return enumValues.map(v => `'${jsesc(v)}'`).join(' | ');
+      result += nested;
     }
   }
 
-  // A Blob
-  if (type === 'string' && schema.format === 'binary') {
-    return 'Blob';
+  // All the types
+  const allOf = schema.allOf || [];
+  if (allOf.length > 0) {
+    if (result !== '') {
+      result += ' & ';
+    }
+    result += allOf.map(u => toNestedType(u, options, container)).join(' & ');
+  }
+
+  if (result !== '') {
+    return result;
+  }
+
+  // Special case: empty objects are emitted last
+  // so we don't combine '{}' with union / allOf types.
+  if (type === 'object') {
+    return '{}';
   }
 
   // A simple type

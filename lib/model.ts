@@ -3,7 +3,6 @@ import { EnumValue } from './enum-value';
 import { GenType } from './gen-type';
 import { tsComments, tsType, unqualifiedName } from './gen-utils';
 import { Options } from './options';
-import { Property } from './property';
 
 
 /**
@@ -19,15 +18,6 @@ export class Model extends GenType {
   // Simple properties
   simpleType: string;
   enumValues: EnumValue[];
-
-  // Array properties
-  elementType: string;
-
-  // Object properties
-  hasSuperClasses: boolean;
-  superClasses: string[];
-  properties: Property[];
-  additionalPropertiesType: string;
 
   constructor(public openApi: OpenAPIObject, name: string, public schema: SchemaObject, options: Options) {
     super(name, unqualifiedName, options);
@@ -48,23 +38,12 @@ export class Model extends GenType {
       }
     }
 
-    this.isObject = type === 'object' || !!schema.properties;
     this.isEnum = (this.enumValues || []).length > 0;
-    this.isSimple = !this.isObject && !this.isEnum;
+    this.isSimple = !this.isEnum;
 
-    if (this.isObject) {
-      // Object
-      this.superClasses = [];
-      const propertiesByName = new Map<string, Property>();
-      this.collectObject(schema, propertiesByName);
-      this.hasSuperClasses = this.superClasses.length > 0;
-      const sortedNames = [...propertiesByName.keys()];
-      sortedNames.sort();
-      this.properties = sortedNames.map(propName => propertiesByName.get(propName) as Property);
-    } else {
-      // Simple / array / enum / union / intersection
-      this.simpleType = tsType(schema, options);
-    }
+    // Actual definition is formatted by tsType
+    this.simpleType = tsType(schema, options);
+
     this.collectImports(schema);
     this.updateImports();
   }
@@ -84,40 +63,5 @@ export class Model extends GenType {
   protected skipImport(name: string): boolean {
     // Don't import own type
     return this.name === name;
-  }
-
-  private collectObject(schema: SchemaObject, propertiesByName: Map<string, Property>) {
-    if (schema.type === 'object' || !!schema.properties) {
-      // An object definition
-      const properties = schema.properties || {};
-      const required = schema.required || [];
-      const propNames = Object.keys(properties);
-      // When there are additional properties, we need an union of all types for it.
-      // See https://github.com/cyclosproject/ng-openapi-gen/issues/68
-      const propTypes = new Set<string>();
-      const appendType = (type: string) => {
-        if (type.startsWith('null | ')) {
-          propTypes.add('null');
-          propTypes.add(type.substr('null | '.length));
-        } else {
-          propTypes.add(type);
-        }
-      };
-      for (const propName of propNames) {
-        const prop = new Property(this, propName, properties[propName], required.includes(propName), this.options);
-        propertiesByName.set(propName, prop);
-        appendType(prop.type);
-        if (!prop.required) {
-          propTypes.add('undefined');
-        }
-      }
-      if (schema.additionalProperties === true) {
-        this.additionalPropertiesType = 'any';
-      } else if (schema.additionalProperties) {
-        const propType = tsType(schema.additionalProperties, this.options);
-        appendType(propType);
-        this.additionalPropertiesType = [...propTypes].sort().join(' | ');
-      }
-    }
   }
 }
