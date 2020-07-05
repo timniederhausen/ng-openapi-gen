@@ -56,13 +56,13 @@ export class NgOpenApiGen {
 
     try {
       // Generate each model
-      const models = [...this.models.values()];
+      const models = [...this.models.keys()].sort().map(k => this.models.get(k) as Model);
       for (const model of models) {
         this.write('model', model, model.fileName, 'models');
       }
 
       // Generate each service
-      const services = [...this.services.values()];
+      const services = [...this.services.keys()].sort().map(k => this.services.get(k) as Service);
       for (const service of services) {
         this.write('service', service, service.fileName, 'services');
       }
@@ -153,7 +153,7 @@ export class NgOpenApiGen {
 
     // First read all operations, as tags are by operation
     const operationsByTag = new Map<string, Operation[]>();
-    for (const opPath of Object.keys(this.openApi.paths)) {
+    for (const opPath of Object.keys(this.openApi.paths).sort()) {
       const pathSpec = this.openApi.paths[opPath] as PathItemObject;
       for (const method of HTTP_METHODS) {
         const methodSpec = pathSpec[method] as OperationObject;
